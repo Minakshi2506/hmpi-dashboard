@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HMPI – Heavy Metal Pollution Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- GIS Map Libraries -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Report Export Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <!-- Chosen Palette: "Warm Neutral" -->
+    <!-- Application Structure Plan: The SPA is structured as a guided, multi-step workflow. -->
+    <!-- Visualization & Content Choices: Utilizes Chart.js for dynamic charts, Leaflet.js for real GIS mapping, and custom HTML/JS for interactive tables. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <script>
+        // Tailwind dark mode configuration
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #334155; }
+        .dark body { background-color: #0f172a; color: #cbd5e1; }
+        .chart-container { position: relative; width: 100%; margin: auto; height: 100%; }
+        .kpi-card { transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; }
+        .kpi-card:hover { transform: translateY(-5px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #F97316; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        .dark .loader { border: 4px solid #334155; border-top: 4px solid #F97316;}
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .table-bar { display: block; height: 8px; background-color: #fb923c; border-radius: 4px; }
+        .input-tab-active { border-color: #F97316; background-color: #fff; color: #F97316; }
+        .dark .input-tab-active { background-color: #1e293b; }
+        #map-container { height: 50vh; z-index: 10; }
+        .leaflet-tile { filter: brightness(1); }
+        .dark .leaflet-tile { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 999; display: flex; align-items: center; justify-content: center;}
+        .modal-content { background: white; padding: 2rem; border-radius: 0.5rem; z-index: 1000; width: 90%; max-width: 500px; }
+        .dark .modal-content { background-color: #1e293b; }
+        .lang-btn.font-bold { color: #F97316; }
+    </style>
+</head>
+<body class="antialiased">
+    <div id="app-container" class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white dark:bg-slate-800 shadow-sm sticky top-0 z-50">
+            <div class="max-w-screen-2xl mx-auto py-3 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                     <div class="w-8 h-8 bg-orange-500 rounded-full flex items-center justify-center text-white font-bold text-lg">H</div>
+                     <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-200" data-i18n-key="dashboardTitle">HMPI Dashboard</h1>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <div id="language-switcher" class="mr-2">
+                        <button data-lang="en" class="lang-btn font-bold">EN</button> | <button data-lang="hi" class="lang-btn">HI</button>
+                    </div>
+                    <button id="about-btn" class="bg-slate-100 dark:bg-slate-700 p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></button>
+                    <button id="settings-btn" class="bg-slate-100 dark:bg-slate-700 p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><svg class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></button>
+                    <button id="dark-mode-toggle" class="bg-slate-100 dark:bg-slate-700 p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600"><svg id="theme-icon-light" class="w-5 h-5 text-slate-600 dark:text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg><svg id="theme-icon-dark" class="w-5 h-5 text-slate-600 dark:text-slate-300 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg></button>
+                    <button id="start-over-btn" class="bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-500 transition-colors hidden" data-i18n-key="newAnalysis">New Analysis</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-screen-2xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+            <section id="upload-section">
+                <div class="max-w-4xl mx-auto bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md border border-slate-200 dark:border-slate-700">
+                    <h2 class="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2" data-i18n-key="welcomeTitle">Welcome to the HMPI Analysis Dashboard</h2>
+                    <p class="text-slate-600 dark:text-slate-400 mb-6" data-i18n-key="welcomeSubtitle">Transform raw groundwater data into an interactive dashboard with actionable insights. This tool automates the calculation of critical pollution indices to provide a clear picture of water quality. Choose your data input method below to begin.</p>
+                    
+                    <div class="mb-6 border-b border-gray-200 dark:border-slate-700">
+                        <nav class="flex -mb-px" aria-label="Tabs">
+                            <button id="upload-tab-btn" class="input-tab-btn w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm input-tab-active" data-i18n-key="uploadFile">Upload File</button>
+                            <button id="manual-tab-btn" class="input-tab-btn w-1/2 py-4 px-1 text-center border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-slate-400 dark:hover:text-slate-300 dark:hover:border-slate-600" data-i18n-key="enterManually">Enter Manually</button>
+                        </nav>
+                    </div>
+
+                    <div id="file-upload-content">
+                        <div id="drop-zone" class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-10 text-center cursor-pointer bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
+                            <p class="text-slate-500 dark:text-slate-400" data-i18n-key="dragDrop">Drag & drop your CSV file here, or click to select</p>
+                            <input type="file" id="file-input" class="hidden" accept=".csv">
+                            <button id="browse-btn" class="mt-4 bg-orange-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-orange-600 transition-colors" data-i18n-key="browseFiles">Browse Files</button>
+                        </div>
+                        <div class="flex flex-col sm:flex-row justify-center items-center mt-4 space-y-2 sm:space-y-0 sm:space-x-4">
+                            <button id="demo-btn" class="w-full sm:w-auto bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700 transition-colors" data-i18n-key="tryDemo">Try with Demo Data</button>
+                            <button id="download-sample-btn" class="w-full sm:w-auto bg-teal-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-teal-700 transition-colors" data-i18n-key="downloadSample">Download Sample CSV</button>
+                        </div>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-2 text-center" data-i18n-key="csvHint">Please use a CSV with columns like 'Lat', 'Lon', 'Date', 'As', 'Pb', 'Cd'.</p>
+                    </div>
+
+                    <div id="manual-entry-content" class="hidden">
+                        <p class="text-slate-600 dark:text-slate-400 mb-4" data-i18n-key="manualEntrySubtitle">Enter your sample data into the grid below. You can add as many rows as you need.</p>
+                        <div class="overflow-x-auto border dark:border-slate-700 rounded-lg">
+                            <table class="min-w-full">
+                                <thead class="bg-slate-50 dark:bg-slate-700"><tr id="manual-table-header"></tr></thead>
+                                <tbody id="manual-table-body" class="dark:bg-slate-800"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-4 flex justify-between items-center">
+                            <button id="add-row-btn" class="bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors" data-i18n-key="addRow">Add Sample Row</button>
+                            <button id="compute-manual-btn" class="bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-colors text-lg" data-i18n-key="computeManual">Compute from Manual Data</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <section id="config-section" class="hidden mt-8 max-w-3xl mx-auto">
+                <div class="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center">
+                         <h2 class="text-xl font-bold text-slate-900 dark:text-slate-100" data-i18n-key="configTitle">Configure Your Dataset</h2>
+                         <button id="cancel-upload-btn" class="text-sm text-slate-500 hover:text-red-600" data-i18n-key="cancel">Cancel</button>
+                    </div>
+                    <p id="file-name-display" class="mt-2 mb-6 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 p-2 rounded-md"></p>
+                    <h3 class="font-semibold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="columnMapTitle">Map Your Data Columns</h3>
+                    <p class="text-slate-600 dark:text-slate-400 mb-4" data-i18n-key="columnMapSubtitle">Please map the columns from your file to the required data fields. The system will try to auto-detect them.</p>
+                    <div id="column-mapping" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+                    <div class="mt-8 border-t dark:border-slate-700 pt-6">
+                         <button id="compute-btn" class="w-full bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-colors text-lg" data-i18n-key="validateCompute">Validate & Compute Indices</button>
+                    </div>
+                </div>
+            </section>
+            
+            <section id="loading-section" class="hidden mt-8">
+                <div class="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-md border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center">
+                    <div class="loader"></div>
+                    <p class="mt-4 text-slate-600 dark:text-slate-300 font-semibold" data-i18n-key="loading">Analyzing data and computing indices...</p>
+                </div>
+            </section>
+
+             <!-- Dashboard -->
+            <section id="dashboard-section" class="hidden">
+                 <!-- Smart Recommendation -->
+                <div id="recommendation-box" class="hidden p-4 mb-6 rounded-lg" role="alert"></div>
+                <!-- KPI Cards -->
+                <div id="kpi-cards-container" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6 mb-8">
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-blue-100 text-blue-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="totalSamples">Total Samples</p><p id="kpi-total-samples" class="text-2xl font-bold text-slate-800 dark:text-slate-200">0</p></div></div>
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-orange-100 text-orange-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="avgHPI">Average HPI</p><p id="kpi-avg-hpi" class="text-2xl font-bold text-slate-800 dark:text-slate-200">0.00</p></div></div>
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-red-100 text-red-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="unsafeSamples">Unsafe Samples</p><p id="kpi-unsafe-samples" class="text-2xl font-bold text-slate-800 dark:text-slate-200">0%</p></div></div>
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-green-100 text-green-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.657 7.343A8 8 0 0117.657 18.657z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1014.12 11.88l-4.242 4.242z"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="topContaminant">Top Contaminant</p><p id="kpi-top-contaminant" class="text-2xl font-bold text-slate-800 dark:text-slate-200">-</p></div></div>
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-purple-100 text-purple-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="avgCD">Average CD</p><p id="kpi-avg-cd" class="text-2xl font-bold text-slate-800 dark:text-slate-200">0.00</p></div></div>
+                    <div class="kpi-card bg-white dark:bg-slate-800 p-5 rounded-lg shadow border dark:border-slate-700 flex items-start space-x-4"><div class="bg-teal-100 text-teal-600 p-3 rounded-full"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path></svg></div><div><p class="text-sm text-slate-500 dark:text-slate-400" data-i18n-key="avgPLI">Average PLI</p><p id="kpi-avg-pli" class="text-2xl font-bold text-slate-800 dark:text-slate-200">0.00</p></div></div>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div id="map-parent" class="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="mapTitle">Contamination Hotspots Map</h3>
+                        <div class="relative w-full aspect-video bg-slate-200 dark:bg-slate-700 rounded-lg overflow-hidden border-2 border-slate-300 dark:border-slate-600" id="map-container"></div>
+                    </div>
+                    <div class="space-y-6">
+                         <div id="contribution-chart-parent" class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                            <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="contributionTitle">Contaminant Contribution</h3>
+                            <div class="chart-container h-48"><canvas id="contributionChart"></canvas></div>
+                        </div>
+                        <div id="classification-chart-parent" class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                            <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="classificationTitle">Sample Classification</h3>
+                            <div class="chart-container h-48"><canvas id="classificationChart"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="timeseries-container" class="mt-8 bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700 hidden">
+                     <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="timeSeriesTitle">Pollution Index Trends Over Time</h3>
+                     <div class="chart-container h-72"><canvas id="timeSeriesChart"></canvas></div>
+                </div>
+                
+                <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="simulationTitle">Scenario Simulation</h3>
+                        <p class="text-sm text-slate-600 dark:text-slate-400 mb-4" data-i18n-key="simulationSubtitle">Adjust contaminant levels to see the potential impact on the HPI.</p>
+                        <div class="space-y-3" id="simulation-controls"></div>
+                        <button id="reset-simulation-btn" class="mt-4 w-full bg-slate-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-slate-600" data-i18n-key="resetSimulation">Reset Simulation</button>
+                    </div>
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                        <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="exportTitle">Export Report</h3>
+                        <p class="text-sm text-slate-600 dark:text-slate-400 mb-4" data-i18n-key="exportSubtitle">Download the full report with data and visualizations.</p>
+                        <div class="flex space-x-4">
+                            <button id="export-pdf-btn" class="w-full bg-red-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-700 flex items-center justify-center space-x-2">
+                                <span id="pdf-export-text">Export PDF</span>
+                                <div id="pdf-export-loader" class="loader w-5 h-5 border-2 hidden"></div>
+                            </button>
+                            <button id="export-excel-btn" class="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 flex items-center justify-center space-x-2"><span>Export Excel</span></button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-8 bg-white dark:bg-slate-800 p-6 rounded-lg shadow border dark:border-slate-700">
+                     <h3 class="text-lg font-bold text-slate-800 dark:text-slate-200 mb-4" data-i18n-key="dataTableTitle">Detailed Sample Data</h3>
+                     <input type="text" id="search-input" placeholder="Search table..." class="w-full md:w-1/3 p-2 border border-slate-300 dark:border-slate-600 rounded-md mb-4 bg-white dark:bg-slate-800">
+                     <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+                            <thead class="bg-slate-50 dark:bg-slate-700"><tr id="table-header"></tr></thead>
+                            <tbody id="table-body" class="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700"></tbody>
+                        </table>
+                     </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div id="settings-modal" class="modal-backdrop hidden">
+        <div class="modal-content dark:bg-slate-900">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl font-bold mb-4" data-i18n-key="settingsTitle">Customize Permissible Limits (Si)</h2>
+                <button id="close-settings-btn" class="text-2xl">&times;</button>
+            </div>
+            <div id="thresholds-form" class="space-y-2 max-h-64 overflow-y-auto pr-2"></div>
+            <div class="mt-6 flex justify-end space-x-3">
+                <button id="cancel-settings-btn" class="bg-gray-200 dark:bg-slate-700 px-4 py-2 rounded-lg" data-i18n-key="cancel">Cancel</button>
+                <button id="save-settings-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg" data-i18n-key="save">Save</button>
+            </div>
+        </div>
+    </div>
+    <div id="about-modal" class="modal-backdrop hidden">
+        <div class="modal-content dark:bg-slate-900">
+             <div class="flex justify-between items-center">
+                <h2 class="text-xl font-bold mb-4" data-i18n-key="aboutTitle">About the Indices</h2>
+                <button id="close-about-btn" class="text-2xl">&times;</button>
+            </div>
+            <div class="space-y-4 text-sm max-h-96 overflow-y-auto pr-2">
+                <div><h3 class="font-bold">Heavy Metal Pollution Index (HPI)</h3><p>An overall quality index, expressed as the weighted arithmetic mean of the ratios between observed and standard values for each heavy metal.</p></div>
+                <div><h3 class="font-bold">Heavy Metal Evaluation Index (HEI)</h3><p>Provides an overall assessment of groundwater quality by summing the ratios of observed to standard values for each metal.</p></div>
+                <div><h3 class="font-bold">Contamination Degree (CD)</h3><p>Represents the sum of contamination factors for all examined metals, indicating the total degree of contamination.</p></div>
+                <div><h3 class="font-bold">Pollution Load Index (PLI)</h3><p>A geometric mean of the contamination factors, used to assess the overall pollution load of a specific site.</p></div>
+                <div><h3 class="font-bold">Nemerow Pollution Index (NPI)</h3><p>A comprehensive index that highlights the most significant pollutant while also reflecting the average contamination level.</p></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        window.jsPDF = window.jspdf.jsPDF;
+        document.addEventListener('DOMContentLoaded', () => {
+            const appState = { file: null, headers: [], data: [], mappedColumns: {}, results: null, charts: {}, originalResults: null };
+            let METAL_STANDARDS = { 'As': { Si: 10, Wi: 0.1 }, 'Pb': { Si: 10, Wi: 0.1 }, 'Cd': { Si: 3, Wi: 1/3 }, 'Cr': { Si: 50, Wi: 0.02 }, 'Ni': { Si: 20, Wi: 0.05 }, 'Zn': { Si: 5000, Wi: 0.0002 } };
+            const DEMO_DATA = "Lat,Lon,Date,As,Pb,Cd,Cr,Ni,Zn\n28.61,77.20,2024-01-15,12,8,2.5,40,15,3000\n28.53,77.39,2024-02-20,8,15,3.5,60,25,6000\n28.45,77.02,2024-03-10,5,5,1,20,10,1500\n28.66,77.45,2024-04-22,25,30,5,80,40,7000\n28.52,77.13,2024-05-18,2,3,0.5,10,5,800";
+            const MANUAL_ENTRY_COLUMNS = ['Lat', 'Lon', 'Date', ...Object.keys(METAL_STANDARDS)];
+
+            const translations = {
+                en: { dashboardTitle: "HMPI Dashboard", newAnalysis: "New Analysis", welcomeTitle: "Welcome to the HMPI Analysis Dashboard", welcomeSubtitle: "Transform raw groundwater data into an interactive dashboard...", uploadFile: "Upload File", enterManually: "Enter Manually", dragDrop: "Drag & drop your CSV file here, or click to select", browseFiles: "Browse Files", tryDemo: "Try with Demo Data", downloadSample: "Download Sample CSV", csvHint: "Please use a CSV with columns like 'Lat', 'Lon', 'Date', 'As', 'Pb', 'Cd'.", manualEntrySubtitle: "Enter your sample data into the grid below...", addRow: "Add Sample Row", computeManual: "Compute from Manual Data", configTitle: "Configure Your Dataset", cancel: "Cancel", columnMapTitle: "Map Your Data Columns", columnMapSubtitle: "Please map the columns from your file...", validateCompute: "Validate & Compute Indices", loading: "Analyzing data and computing indices...", totalSamples: "Total Samples", avgHPI: "Average HPI", unsafeSamples: "Unsafe Samples", topContaminant: "Top Contaminant", avgCD: "Average CD", avgPLI: "Average PLI", mapTitle: "Contamination Hotspots Map", contributionTitle: "Contaminant Contribution", classificationTitle: "Sample Classification", timeSeriesTitle: "Pollution Index Trends Over Time", simulationTitle: "Scenario Simulation", simulationSubtitle: "Adjust contaminant levels to see the potential impact...", resetSimulation: "Reset Simulation", exportTitle: "Export Report", exportSubtitle: "Download the full report...", dataTableTitle: "Detailed Sample Data", settingsTitle: "Customize Permissible Limits (Si)", save: "Save", aboutTitle: "About the Indices" },
+                hi: { dashboardTitle: "एचएमपीआई डैशबोर्ड", newAnalysis: "नया विश्लेषण", welcomeTitle: "एचएमपीआई विश्लेषण डैशबोर्ड में आपका स्वागत है", welcomeSubtitle: "कच्चे भूजल डेटा को कार्रवाई योग्य अंतर्दृष्टि के साथ एक इंटरैक्टिव डैशबोर्ड में बदलें...", uploadFile: "फ़ाइल अपलोड करें", enterManually: "मैन्युअल रूप से दर्ज करें", dragDrop: "अपनी CSV फ़ाइल को यहां खींचें और छोड़ें, या चुनने के लिए क्लिक करें", browseFiles: "फ़ाइलें ब्राउज़ करें", tryDemo: "डेमो डेटा के साथ प्रयास करें", downloadSample: "नमूना CSV डाउनलोड करें", csvHint: "कृपया 'Lat', 'Lon', 'Date', 'As', 'Pb', 'Cd' जैसे कॉलम वाली CSV का उपयोग करें।", manualEntrySubtitle: "नीचे दिए गए ग्रिड में अपना नमूना डेटा दर्ज करें...", addRow: "नमूना पंक्ति जोड़ें", computeManual: "मैनुअल डेटा से गणना करें", configTitle: "अपने डेटासेट को कॉन्फ़िगर करें", cancel: "रद्द करें", columnMapTitle: "अपने डेटा कॉलम मैप करें", columnMapSubtitle: "कृपया अपनी फ़ाइल से कॉलम को आवश्यक डेटा फ़ील्ड में मैप करें...", validateCompute: "सत्यापित करें और सूचकांकों की गणना करें", loading: "डेटा का विश्लेषण और सूचकांकों की गणना हो रही है...", totalSamples: "कुल नमूने", avgHPI: "औसत एचपीआई", unsafeSamples: "असुरक्षित नमूने", topContaminant: "शीर्ष संदूषक", avgCD: "औसत सीडी", avgPLI: "औसत पीएलआई", mapTitle: "संदूषण हॉटस्पॉट मानचित्र", contributionTitle: "संदूषक योगदान", classificationTitle: "नमूना वर्गीकरण", timeSeriesTitle: "समय के साथ प्रदूषण सूचकांक रुझान", simulationTitle: "परिदृश्य सिमुलेशन", simulationSubtitle: "संभावित प्रभाव देखने के लिए संदूषक स्तरों को समायोजित करें...", resetSimulation: "सिमुलेशन रीसेट करें", exportTitle: "रिपोर्ट निर्यात करें", exportSubtitle: "डेटा और विज़ुअलाइज़ेशन के साथ पूरी रिपोर्ट डाउनलोड करें...", dataTableTitle: "विस्तृत नमूना डेटा", settingsTitle: "अनुमेय सीमाएँ (Si) अनुकूलित करें", save: "सहेजें", aboutTitle: "सूचकांकों के बारे में" }
+            };
+
+            let currentLanguage = 'en';
+            let map;
+
+            // DOM Elements
+            const allElements = {
+                sections: { upload: document.getElementById('upload-section'), config: document.getElementById('config-section'), loading: document.getElementById('loading-section'), dashboard: document.getElementById('dashboard-section') },
+                uploadTabBtn: document.getElementById('upload-tab-btn'), manualTabBtn: document.getElementById('manual-tab-btn'),
+                fileUploadContent: document.getElementById('file-upload-content'), manualEntryContent: document.getElementById('manual-entry-content'),
+                dropZone: document.getElementById('drop-zone'), fileInput: document.getElementById('file-input'), browseBtn: document.getElementById('browse-btn'), demoBtn: document.getElementById('demo-btn'), downloadSampleBtn: document.getElementById('download-sample-btn'),
+                manualTableHeader: document.getElementById('manual-table-header'), manualTableBody: document.getElementById('manual-table-body'), addRowBtn: document.getElementById('add-row-btn'), computeManualBtn: document.getElementById('compute-manual-btn'),
+                startOverBtn: document.getElementById('start-over-btn'), cancelUploadBtn: document.getElementById('cancel-upload-btn'), computeBtn: document.getElementById('compute-btn'),
+                fileNameDisplay: document.getElementById('file-name-display'), columnMappingDiv: document.getElementById('column-mapping'),
+                searchInput: document.getElementById('search-input'),
+                settingsModal: document.getElementById('settings-modal'), settingsBtn: document.getElementById('settings-btn'), closeSettingsBtn: document.getElementById('close-settings-btn'), cancelSettingsBtn: document.getElementById('cancel-settings-btn'), saveSettingsBtn: document.getElementById('save-settings-btn'), thresholdsForm: document.getElementById('thresholds-form'),
+                aboutModal: document.getElementById('about-modal'), aboutBtn: document.getElementById('about-btn'), closeAboutBtn: document.getElementById('close-about-btn'),
+                simulationControls: document.getElementById('simulation-controls'), resetSimulationBtn: document.getElementById('reset-simulation-btn'),
+                darkModeToggle: document.getElementById('dark-mode-toggle'), themeIconLight: document.getElementById('theme-icon-light'), themeIconDark: document.getElementById('theme-icon-dark'),
+                exportPdfBtn: document.getElementById('export-pdf-btn'), pdfExportText: document.getElementById('pdf-export-text'), pdfExportLoader: document.getElementById('pdf-export-loader')
+            };
+
+            // --- CORE LOGIC & FUNCTIONS from previous correct version ---
+            function showSection(sectionName) { allElements.startOverBtn.classList.toggle('hidden', sectionName !== 'dashboard'); Object.values(allElements.sections).forEach(s => s.classList.add('hidden')); if (allElements.sections[sectionName]) allElements.sections[sectionName].classList.remove('hidden'); }
+            function resetApp() { if(map){ map.remove(); map=null; } Object.values(appState.charts).forEach(c=>c&&c.destroy()); Object.assign(appState, {file:null,headers:[],data:[],mappedColumns:{},results:null,charts:{},originalResults:null}); allElements.fileInput.value=''; allElements.manualTableBody.innerHTML=''; addManualRow(); showSection('upload'); }
+            function loadDemoData(){ const lines=DEMO_DATA.split('\n'); appState.headers=lines[0].split(',').map(h=>h.trim()); appState.data=lines.slice(1).map(l=>{ const v=l.split(',');let r={};appState.headers.forEach((h,i)=>{r[h]=v[i]?v[i].trim():''});return r}); appState.mappedColumns={Lat:'Lat',Lon:'Lon',Date:'Date',As:'As',Pb:'Pb',Cd:'Cd',Cr:'Cr',Ni:'Ni',Zn:'Zn'}; appState.file={name:'Demo Data'}; showSection('loading'); setTimeout(runCalculations,1500); }
+            function handleFileSelect(file){ if(!file||!file.name.toLowerCase().endsWith('.csv')){alert('Only CSV files are supported.');return} appState.file=file; allElements.fileNameDisplay.textContent=`File: ${file.name}`; const reader=new FileReader(); reader.onload=(e)=>{ const lines=e.target.result.split('\n'); appState.headers=lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h=>h.trim().replace(/"/g,'')); appState.data=lines.slice(1).map(l=>{const v=l.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);let r={}; appState.headers.forEach((h,i)=>{r[h]=v[i]?v[i].trim().replace(/"/g,''):''}); return r;}).filter(r=>Object.values(r).some(v=>v!=='')); populateColumnMapping(); showSection('config')}; reader.readAsText(file); }
+            function runCalculations(simulationData=null){ const dataToProcess=simulationData||appState.data; appState.results=dataToProcess.map((row,index)=>{ let hpiN=0,hpiD=0,heiS=0,cfS=0,cfP=1,cfC=0; const contrib={},cfVals=[]; Object.keys(METAL_STANDARDS).forEach(m=>{const col=appState.mappedColumns[m];if(col&&row[col]&&!isNaN(parseFloat(row[col]))){const Mi=parseFloat(row[col]),{Si,Wi}=METAL_STANDARDS[m],Qi=(Mi/Si)*100,hpiC=Wi*Qi;hpiN+=hpiC;hpiD+=Wi;heiS+=Mi/Si;contrib[m]=hpiC;const cf=Mi/Si;cfS+=cf;if(cf>0)cfP*=cf;cfC++;cfVals.push(cf)}}); const hpi=hpiD>0?hpiN/hpiD:0,cd=cfS,pli=cfC>0?Math.pow(cfP,1/cfC):0,cfAvg=cfC>0?cfS/cfC:0,cfMax=cfVals.length>0?Math.max(...cfVals):0,npi=Math.sqrt((Math.pow(cfAvg,2)+Math.pow(cfMax,2))/2); const getClass=v=>v<50?'Excellent':v<100?'Good':v<150?'Poor':'Unsafe'; const dateCol=appState.mappedColumns['Date']; return{'Sample_ID':`S${index+1}`,Lat:parseFloat(row[appState.mappedColumns.Lat]),Lon:parseFloat(row[appState.mappedColumns.Lon]),Date:dateCol?row[dateCol]:null,HPI:hpi,HEI:heiS,Classification:getClass(hpi),contributions:contrib,CD:cd,PLI:pli,NPI:npi}; }); if(!simulationData)appState.originalResults=JSON.parse(JSON.stringify(appState.results)); displayDashboard();}
+            function populateColumnMapping(){ allElements.columnMappingDiv.innerHTML=''; const fields=['Lat','Lon','Date',...Object.keys(METAL_STANDARDS)]; fields.forEach(f=>{const div=document.createElement('div'); div.innerHTML=`<label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">${f}:</label><select data-field="${f}" class="w-full border-slate-300 dark:border-slate-600 dark:bg-slate-700 rounded-md shadow-sm"><option value="">Select Column</option>${appState.headers.map(h=>`<option value="${h}">${h}</option>`).join('')}</select>`; const sel=div.querySelector('select'),match=appState.headers.find(h=>h.toLowerCase().trim()===f.toLowerCase().trim()); if(match)sel.value=match; allElements.columnMappingDiv.appendChild(div);});}
+            function displayDashboard(){ showSection('dashboard'); const totS=appState.results.length,avgHPI=totS>0?appState.results.reduce((s,r)=>s+r.HPI,0)/totS:0,unsC=appState.results.filter(r=>r.Classification==='Unsafe').length,unsP=totS>0?(unsC/totS*100).toFixed(1):0,totC={}; appState.results.forEach(r=>{Object.entries(r.contributions).forEach(([m,v])=>{totC[m]=(totC[m]||0)+v})}); const topC=Object.keys(totC).length>0?Object.entries(totC).sort((a,b)=>b[1]-a[1])[0][0]:'-',avgCD=totS>0?appState.results.reduce((s,r)=>s+r.CD,0)/totS:0,avgPLI=totS>0?appState.results.reduce((s,r)=>s+r.PLI,0)/totS:0; document.getElementById('kpi-total-samples').textContent=totS; document.getElementById('kpi-avg-hpi').textContent=avgHPI.toFixed(2); document.getElementById('kpi-unsafe-samples').textContent=`${unsP}%`; document.getElementById('kpi-top-contaminant').textContent=topC; document.getElementById('kpi-avg-cd').textContent=avgCD.toFixed(2); document.getElementById('kpi-avg-pli').textContent=avgPLI.toFixed(2); const classifications=appState.results.reduce((a,r)=>{a[r.Classification]=(a[r.Classification]||0)+1;return a},{}); createClassificationChart(classifications); createContributionChart(totC); populateTable(appState.results); generateRecommendations(); const hasDate=appState.mappedColumns['Date']&&appState.results.some(r=>r.Date); document.getElementById('timeseries-container').classList.toggle('hidden',!hasDate); if(hasDate)createTimeSeriesChart(); setupSimulation(); setTimeout(()=>{if(!map)initializeMap(); drawMap()},100);}
+            function createClassificationChart(classifications){ const id='classificationChart',ctx=document.getElementById(id).getContext('2d'); if(appState.charts[id])appState.charts[id].destroy(); const labels=['Excellent','Good','Poor','Unsafe'].filter(l=>(classifications[l]||0)>0),data=labels.map(l=>classifications[l]),colors={'Excellent':'#3b82f6','Good':'#22c55e','Poor':'#f97316','Unsafe':'#ef4444'}; appState.charts[id]=new Chart(ctx,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:labels.map(l=>colors[l]),borderColor:document.documentElement.classList.contains('dark')?'#0f172a':'#ffffff',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:document.documentElement.classList.contains('dark')?'#cbd5e1':'#334155'}}}}});}
+            function createContributionChart(contributions){ const id='contributionChart',ctx=document.getElementById(id).getContext('2d'); if(appState.charts[id])appState.charts[id].destroy(); const sorted=Object.entries(contributions).sort((a,b)=>b[1]-a[1]); const isDark=document.documentElement.classList.contains('dark'), gridColor=isDark?'rgba(255,255,255,0.1)':'rgba(0,0,0,0.1)', textColor=isDark?'#cbd5e1':'#334155'; appState.charts[id]=new Chart(ctx,{type:'bar',data:{labels:sorted.map(e=>e[0]),datasets:[{label:'HPI Contribution',data:sorted.map(e=>e[1]),backgroundColor:'#fb923c'}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:textColor},grid:{color:gridColor}},y:{ticks:{color:textColor},grid:{color:gridColor}}}}});}
+            function populateTable(data){ const th=document.getElementById('table-header'),tb=document.getElementById('table-body'); th.innerHTML='';tb.innerHTML=''; if(!data||data.length===0)return; const headers=['Sample_ID','Lat','Lon','Date','HPI','HEI','CD','PLI','NPI','Classification']; th.innerHTML=headers.map(h=>`<th class="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">${h.replace('_',' ')}</th>`).join(''); data.forEach(r=>{const tr=document.createElement('tr'); tr.innerHTML=headers.map(h=>`<td class="px-6 py-4 whitespace-nowrap text-sm text-slate-700 dark:text-slate-300">${typeof r[h]==='number'?r[h].toFixed(2):(r[h]||'N/A')}</td>`).join(''); tb.appendChild(tr);});}
+            function initializeMap(){ if(map)map.remove(); map=L.map('map-container').setView([20.5937,78.9629],5); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OSM contributors'}).addTo(map);}
+            function drawMap(){ if(!map)return; map.eachLayer(l=>{if(l instanceof L.CircleMarker)map.removeLayer(l)}); const validPts=appState.results.filter(r=>!isNaN(r.Lat)&&!isNaN(r.Lon)); if(validPts.length===0)return; const bounds=L.latLngBounds(validPts.map(r=>[r.Lat,r.Lon])); map.fitBounds(bounds.pad(0.1)); const colorMap={'Unsafe':'#ef4444','Poor':'#f97316','Good':'#22c55e','Excellent':'#3b82f6'}; validPts.forEach(r=>{L.circleMarker([r.Lat,r.Lon],{radius:8,fillColor:colorMap[r.Classification]||'#9ca3af',color:"#fff",weight:2,opacity:1,fillOpacity:0.8}).addTo(map).bindPopup(`<b>Sample ${r.Sample_ID}</b><br>HPI: ${r.HPI.toFixed(2)}<br>Status: ${r.Classification}`);});}
+            function generateRecommendations(){const recBox=document.getElementById('recommendation-box');let exceedingMetals={};let unsafeSampleCount=0;appState.data.forEach((row,i)=>{let isUnsafe=false;Object.keys(METAL_STANDARDS).forEach(metal=>{const col=appState.mappedColumns[metal];if(col&&row[col]&&!isNaN(parseFloat(row[col]))){if(parseFloat(row[col])>METAL_STANDARDS[metal].Si){exceedingMetals[metal]=(exceedingMetals[metal]||0)+1;isUnsafe=true}}});if(isUnsafe)unsafeSampleCount++});const totalSamples=appState.data.length;if(unsafeSampleCount>0){const mostExceeded=Object.entries(exceedingMetals).sort((a,b)=>b[1]-a[1]);const topMetal=mostExceeded.length>0?mostExceeded[0][0]:"some metals";const percentage=(unsafeSampleCount/totalSamples*100).toFixed(0);recBox.className='bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 mb-6 rounded-r-lg';recBox.innerHTML=`<p class="font-bold">Action Required</p><p>⚠️ ${percentage}% of samples exceed safe limits for at least one metal. The most frequent issue is with <strong>${topMetal}</strong>. Suggested action: Investigate potential sources of ${topMetal} contamination in hotspot areas shown on the map.</p>`}else{recBox.className='bg-green-100 border-l-4 border-green-500 text-green-800 p-4 mb-6 rounded-r-lg';recBox.innerHTML=`<p class="font-bold">All Clear</p><p>✅ All samples are within the permissible limits for the analyzed heavy metals.</p>`}recBox.classList.remove('hidden')}
+            function createTimeSeriesChart(){const id='timeSeriesChart',ctx=document.getElementById(id).getContext('2d');if(appState.charts[id])appState.charts[id].destroy();const sortedData=[...appState.results].filter(r=>r.Date&&!isNaN(new Date(r.Date))).sort((a,b)=>new Date(a.Date)-new Date(b.Date));if(sortedData.length<2){document.getElementById('timeseries-container').classList.add('hidden');return}const labels=sortedData.map(r=>r.Date),hpiData=sortedData.map(r=>r.HPI);const x=sortedData.map((_,i)=>i),y=hpiData;let sumX=0,sumY=0,sumXY=0,sumX2=0;const n=x.length;for(let i=0;i<n;i++){sumX+=x[i];sumY+=y[i];sumXY+=x[i]*y[i];sumX2+=x[i]*x[i]}const slope=(n*sumXY-sumX*sumY)/(n*sumX2-sumX*sumX);const intercept=(sumY-slope*sumX)/n;const forecastData=x.map(val=>slope*val+intercept);const lastDate=new Date(labels[n-1]);const forecastLabels=[];for(let i=1;i<=3;i++){const nextDate=new Date(lastDate);nextDate.setMonth(lastDate.getMonth()+i);forecastLabels.push(nextDate.toISOString().split('T')[0])}const forecastValues=[];for(let i=n;i<n+3;i++){forecastValues.push(slope*i+intercept)}const isDark=document.documentElement.classList.contains('dark'),gridColor=isDark?'rgba(255,255,255,0.1)':'rgba(0,0,0,0.1)',textColor=isDark?'#cbd5e1':'#334155';appState.charts[id]=new Chart(ctx,{type:'line',data:{labels:[...labels,...forecastLabels],datasets:[{label:'HPI Trend',data:hpiData,borderColor:'#F97316',tension:0.1,fill:false},{label:'Forecast',data:[...new Array(n-1).fill(null),hpiData[n-1],...forecastValues],borderColor:'red',borderDash:[5,5],fill:false,tension:0.1}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:false,title:{display:true,text:'HPI Value',color:textColor},ticks:{color:textColor},grid:{color:gridColor}},x:{ticks:{color:textColor},grid:{color:gridColor}}}}});}
+            async function handleExportPDF(){const{jsPDF}=window.jspdf;const doc=new jsPDF('p','mm','a4');const loader=allElements.pdfExportLoader,text=allElements.pdfExportText;loader.classList.remove('hidden');text.classList.add('hidden');const addImageToPdf=async(elementId,doc,yPos)=>{const el=document.getElementById(elementId);const canvas=await html2canvas(el,{logging:false,useCORS:true,scale:2});const imgData=canvas.toDataURL('image/png');const imgProps=doc.getImageProperties(imgData);const pdfWidth=doc.internal.pageSize.getWidth()-20;const pdfHeight=(imgProps.height*pdfWidth)/imgProps.width;doc.addImage(imgData,'PNG',10,yPos,pdfWidth,pdfHeight);return yPos+pdfHeight+10};doc.setFontSize(20).text('HMPI Analysis Report',10,20);doc.setFontSize(12).text(`Date: ${new Date().toLocaleDateString()}`,10,30);doc.setFontSize(12).text(`Samples Analyzed: ${appState.results.length}`,10,36);doc.setFontSize(12).text(`Average HPI: ${(appState.results.reduce((s,r)=>s+r.HPI,0)/appState.results.length).toFixed(2)}`,10,42);let y=await addImageToPdf('kpi-cards-container',doc,50);if(y>280){doc.addPage();y=10}y=await addImageToPdf('map-parent',doc,y);if(y>280){doc.addPage();y=10}y=await addImageToPdf('contribution-chart-parent',doc,y);if(y>280){doc.addPage();y=10}y=await addImageToPdf('classification-chart-parent',doc,y);doc.addPage();doc.setFontSize(16).text('Recommendations',10,20);const recText=document.getElementById('recommendation-box').innerText;doc.setFontSize(12).text(doc.splitTextToSize(recText,180),10,30);doc.save('hmpi_report.pdf');loader.classList.add('hidden');text.classList.remove('hidden')}
+            function handleExportExcel(){const data=appState.results.map(r=>{const{contributions,...rest}=r;return rest}),ws=XLSX.utils.json_to_sheet(data),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"HMPI Results");XLSX.writeFile(wb,"hmpi_results.xlsx");}
+            function switchLanguage(lang){ currentLanguage=lang; document.querySelectorAll('.lang-btn').forEach(b=>b.classList.remove('font-bold')); document.querySelector(`.lang-btn[data-lang="${lang}"]`).classList.add('font-bold'); document.querySelectorAll('[data-i18n-key]').forEach(el=>{const key=el.dataset.i18nKey;el.innerText=(translations[lang]&&translations[lang][key])?translations[lang][key]:translations['en'][key]});}
+            function addManualRow(){const tr=document.createElement('tr');tr.className='border-t dark:border-slate-700';let cells=MANUAL_ENTRY_COLUMNS.map(c=>`<td class="p-1"><input type="${c==='Date'?'date':'number'}" step="any" placeholder="${c}" data-col="${c}" class="w-full p-2 border rounded-md text-sm dark:bg-slate-700 dark:border-slate-600"></td>`).join('');cells+=`<td class="p-1 text-center"><button class="remove-row-btn text-red-500 hover:text-red-700 font-bold">X</button></td>`;tr.innerHTML=cells;allElements.manualTableBody.appendChild(tr);}
+            function setupManualEntry(){allElements.manualTableHeader.innerHTML=MANUAL_ENTRY_COLUMNS.map(c=>`<th class="p-2 text-sm font-medium text-slate-600 dark:text-slate-400">${c}</th>`).join('')+`<th></th>`;addManualRow();}
+            function handleManualCompute(){const data=[]; allElements.manualTableBody.querySelectorAll('tr').forEach(tr=>{const rowData={};let hasValue=false;tr.querySelectorAll('input').forEach(i=>{rowData[i.dataset.col]=i.value;if(i.value)hasValue=true});if(hasValue)data.push(rowData)});if(data.length===0){alert('Please enter at least one sample.');return} appState.data=data;appState.mappedColumns=MANUAL_ENTRY_COLUMNS.reduce((a,c)=>({...a,[c]:c}),{});showSection('loading');setTimeout(runCalculations,1500);}
+            function downloadSampleData(){const blob=new Blob([DEMO_DATA],{type:'text/csv;charset=utf-8;'});const link=document.createElement('a'),url=URL.createObjectURL(blob);link.setAttribute('href',url);link.setAttribute('download','sample_dataset.csv');link.style.visibility='hidden';document.body.appendChild(link);link.click();document.body.removeChild(link);}
+            function applyTheme(theme){if(theme==='dark'){document.documentElement.classList.add('dark');allElements.themeIconLight.classList.add('hidden');allElements.themeIconDark.classList.remove('hidden')}else{document.documentElement.classList.remove('dark');allElements.themeIconLight.classList.remove('hidden');allElements.themeIconDark.classList.add('hidden')} Object.values(appState.charts).forEach(c=>{if(c){const isDark=theme==='dark',gridColor=isDark?'rgba(255,255,255,0.1)':'rgba(0,0,0,0.1)',textColor=isDark?'#cbd5e1':'#334155';c.options.plugins.legend.labels.color=textColor;if(c.options.scales){Object.values(c.options.scales).forEach(s=>{s.ticks.color=textColor;s.grid.color=gridColor;if(s.title)s.title.color=textColor})}c.update()}});}
+            function openSettingsModal(){ allElements.thresholdsForm.innerHTML=''; Object.entries(METAL_STANDARDS).forEach(([m,{Si}])=>{allElements.thresholdsForm.innerHTML+=`<div class="grid grid-cols-2 items-center"><label class="font-medium">${m} (Si):</label><input type="number" data-metal="${m}" value="${Si}" class="p-1 border rounded-md dark:bg-slate-800 dark:border-slate-600"></div>`}); allElements.settingsModal.classList.remove('hidden');}
+            function closeSettingsModal(){allElements.settingsModal.classList.add('hidden');}
+            function setupSimulation(){ allElements.simulationControls.innerHTML=''; const detectedMetals=[...new Set(Object.values(appState.mappedColumns))].filter(c=>METAL_STANDARDS[c]); detectedMetals.forEach(m=>{const div=document.createElement('div'); div.innerHTML=`<label class="block text-sm font-medium text-slate-700 dark:text-slate-300">${m} Adjustment (%)</label><div class="flex items-center space-x-2"><input type="range" min="-100" max="100" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" data-metal="${m}"><span class="font-semibold text-sm w-12 text-right">0%</span></div>`; allElements.simulationControls.appendChild(div);});}
+            function handleSimulationChange(){ const updatedData=appState.data.map(originalRow=>{const newRow={...originalRow}; allElements.simulationControls.querySelectorAll('input[type="range"]').forEach(input=>{ const adj=parseFloat(input.value)/100,metal=input.dataset.metal,col=appState.mappedColumns[metal]; if(col&&!isNaN(parseFloat(newRow[col])))newRow[col]=parseFloat(originalRow[col])*(1+adj)}); return newRow;}); runCalculations(updatedData);}
+            // EVENT LISTENERS
+            allElements.startOverBtn.addEventListener('click', resetApp);
+            allElements.demoBtn.addEventListener('click', loadDemoData);
+            allElements.downloadSampleBtn.addEventListener('click', downloadSampleData);
+            allElements.browseBtn.addEventListener('click', () => allElements.fileInput.click());
+            allElements.fileInput.addEventListener('change', (e) => handleFileSelect(e.target.files[0]));
+            allElements.dropZone.addEventListener('dragover', (e) => { e.preventDefault(); allElements.dropZone.classList.add('bg-slate-200','dark:bg-slate-600'); });
+            allElements.dropZone.addEventListener('dragleave', () => allElements.dropZone.classList.remove('bg-slate-200','dark:bg-slate-600'));
+            allElements.dropZone.addEventListener('drop', (e) => { e.preventDefault(); allElements.dropZone.classList.remove('bg-slate-200','dark:bg-slate-600'); handleFileSelect(e.dataTransfer.files[0]); });
+            allElements.uploadTabBtn.addEventListener('click', () => { allElements.uploadTabBtn.classList.add('input-tab-active'); allElements.manualTabBtn.classList.remove('input-tab-active'); allElements.fileUploadContent.classList.remove('hidden'); allElements.manualEntryContent.classList.add('hidden'); });
+            allElements.manualTabBtn.addEventListener('click', () => { allElements.manualTabBtn.classList.add('input-tab-active'); allElements.uploadTabBtn.classList.remove('input-tab-active'); allElements.manualEntryContent.classList.remove('hidden'); allElements.fileUploadContent.classList.add('hidden'); });
+            allElements.addRowBtn.addEventListener('click', addManualRow);
+            allElements.manualTableBody.addEventListener('click', e => { if (e.target.classList.contains('remove-row-btn')) { if (allElements.manualTableBody.rows.length > 1) e.target.closest('tr').remove(); else alert('Cannot remove the last row.'); } });
+            allElements.computeManualBtn.addEventListener('click', handleManualCompute);
+            allElements.cancelUploadBtn.addEventListener('click', resetApp);
+            allElements.computeBtn.addEventListener('click', () => { appState.mappedColumns={}; document.querySelectorAll('#column-mapping select').forEach(s=>{if(s.value)appState.mappedColumns[s.dataset.field]=s.value}); showSection('loading'); setTimeout(runCalculations,1500); });
+            allElements.searchInput.addEventListener('keyup', e => populateTable(appState.results.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(e.target.value.toLowerCase())))));
+            allElements.exportPdfBtn.addEventListener('click', handleExportPDF);
+            document.getElementById('export-excel-btn').addEventListener('click', handleExportExcel);
+            document.getElementById('language-switcher').addEventListener('click', e => { if(e.target.matches('.lang-btn')) switchLanguage(e.target.dataset.lang); });
+            allElements.settingsBtn.addEventListener('click', openSettingsModal);
+            allElements.closeSettingsBtn.addEventListener('click', closeSettingsModal);
+            allElements.cancelSettingsBtn.addEventListener('click', closeSettingsModal);
+            allElements.saveSettingsBtn.addEventListener('click', () => { allElements.thresholdsForm.querySelectorAll('input').forEach(i=>{METAL_STANDARDS[i.dataset.metal].Si=parseFloat(i.value)}); runCalculations(); closeSettingsModal(); });
+            allElements.aboutBtn.addEventListener('click', () => allElements.aboutModal.classList.remove('hidden'));
+            allElements.closeAboutBtn.addEventListener('click', () => allElements.aboutModal.classList.add('hidden'));
+            allElements.simulationControls.addEventListener('change', handleSimulationChange);
+            allElements.resetSimulationBtn.addEventListener('click', () => { allElements.simulationControls.querySelectorAll('input[type="range"]').forEach(i=>{i.value=0;i.nextElementSibling.textContent='0%'}); runCalculations(); });
+            allElements.darkModeToggle.addEventListener('click', () => { const newTheme = document.documentElement.classList.contains('dark') ? 'light' : 'dark'; localStorage.setItem('theme', newTheme); applyTheme(newTheme); });
+            
+            // Initial setup
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            applyTheme(savedTheme);
+            setupManualEntry();
+            showSection('upload');
+            switchLanguage('en');
+        });
+    </script>
+</body>
+</html>
+
